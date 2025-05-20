@@ -13,7 +13,7 @@ import {
   fadeOutAudioOnly,
   initializeAccordion,
 } from './components/accordion-video';
-import { destroyModal, initializeModal } from './components/Modal/modal';
+import { destroyModal, initializeModal } from './components/modal/modal';
 import {
   blockActivePageClicks,
   blockClicks,
