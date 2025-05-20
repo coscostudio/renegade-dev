@@ -41,6 +41,8 @@
     "@finsweet/eslint-config": "^3.0.3",
     "@finsweet/tsconfig": "^1.4.2",
     "@playwright/test": "^1.50.1",
+    "@types/virtual-scroll": "^2.0.3",
+    "@types/webgl2": "^0.0.11",
     "cross-env": "^7.0.3",
     "esbuild": "^0.24.2",
     "eslint": "^9.19.0",
@@ -52,9 +54,14 @@
     "typescript-eslint": "^8.23.0"
   },
   "dependencies": {
-    "@finsweet/ts-utils": "^0.40.0"
+    "@barba/core": "^2.10.3",
+    "@finsweet/ts-utils": "^0.40.0",
+    "gsap": "^3.13.0",
+    "hls.js": "^1.6.2",
+    "three": "^0.176.0",
+    "virtual-scroll": "^2.2.1"
   },
   "engines": {
-    "pnpm": ">=10"
+    "pnpm": ">=9"
   }
 }
