@@ -1,4 +1,3 @@
-// src/index.ts
 import barba from '@barba/core';
 import { restartWebflow } from '@finsweet/ts-utils';
 import { gsap } from 'gsap';
@@ -27,6 +26,7 @@ import { videoCacheManager } from './components/video/cacheManager';
 import { cleanupHLSVideo } from './components/video/hlsVideoLoader';
 import { initializeVideo } from './components/video/videoLoader';
 import { ArchiveView } from './components/WebGLGrid/ArchiveView';
+import { directLinkHandler } from './utils/directLinkHandler';
 
 /**
  * Add the grid loader styles
@@ -505,6 +505,25 @@ function setupEarlyGridInitialization() {
   }
 }
 
+/**
+ * Handle direct link accordion opening
+ */
+function handleDirectLinkAccordion() {
+  // Only handle on index/home page
+  if (window.location.pathname !== '/' && !window.location.pathname.includes('index')) {
+    return;
+  }
+
+  if (directLinkHandler.hasValidDirectLink() && !directLinkHandler.hasOpenedAccordion()) {
+    console.log('Processing direct link for accordion');
+
+    // Wait for accordion initialization to complete
+    setTimeout(() => {
+      directLinkHandler.openTargetAccordion();
+    }, 1000);
+  }
+}
+
 // Initialize preloader before anything else
 document.addEventListener('DOMContentLoaded', () => {
   if (!preloaderCalled) {
@@ -527,17 +546,25 @@ document.addEventListener('DOMContentLoaded', () => {
         ) {
           initArchiveViewForDirectLoad(false);
         } else if (!isArchivePage()) {
-          // For non-archive pages, handle normally
+          // For non-archive pages (like index page with direct links), handle accordion opening
+          handleDirectLinkAccordion();
         }
       });
 
       // Start the preloader
-      playPreloader().catch((e) => {
-        // If preloader fails, make sure we still initialize the grid
-        if (isArchivePage() && isInitialPageLoad && !archiveGridInitialized) {
-          initArchiveViewForDirectLoad(false);
-        }
-      });
+      playPreloader()
+        .then(() => {
+          // After preloader completes, handle direct link accordion opening
+          handleDirectLinkAccordion();
+        })
+        .catch((e) => {
+          // If preloader fails, make sure we still initialize the grid or handle direct links
+          if (isArchivePage() && isInitialPageLoad && !archiveGridInitialized) {
+            initArchiveViewForDirectLoad(false);
+          } else {
+            handleDirectLinkAccordion();
+          }
+        });
     } else {
       preloaderCalled = true;
       // Ensure loading class is removed
@@ -556,6 +583,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (preloader) {
         preloader.remove();
       }
+
+      // Handle direct links on legal page too (though preloader is skipped)
+      handleDirectLinkAccordion();
     }
   }
 });
@@ -670,6 +700,9 @@ barba.init({
         restartWebflow();
         unblockClicks();
         document.body.style.overflow = '';
+
+        // Handle direct links even on legal page
+        handleDirectLinkAccordion();
       },
       beforeLeave() {
         // Any cleanup specific to legal page
@@ -682,6 +715,15 @@ barba.init({
       afterEnter() {
         restartWebflow();
         initializeAccordion();
+
+        // Handle direct link accordion opening after accordion is initialized
+        setTimeout(() => {
+          handleDirectLinkAccordion();
+        }, 500);
+      },
+      beforeLeave() {
+        // Reset direct link handler for navigation
+        directLinkHandler.reset();
       },
     },
 
@@ -828,6 +870,9 @@ barba.hooks.before((data) => {
         fadeOutAudioOnly(videoElement);
       }
     });
+
+    // Reset direct link handler when leaving index page
+    directLinkHandler.reset();
   }
 
   destroyModal();
@@ -896,6 +941,13 @@ barba.hooks.after(async ({ current, next }) => {
   restartWebflow();
   initializeVideo(document);
   initializeModal();
+
+  // Handle direct links for the new page
+  if (next?.namespace === 'index') {
+    setTimeout(() => {
+      handleDirectLinkAccordion();
+    }, 500);
+  }
 });
 
 // Initialize on page load
@@ -909,10 +961,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isLegalPage()) {
       preloaderCalled = true;
       // Start the preloader - setupEarlyGridInitialization is called earlier
-      playPreloader().catch(() => {});
+      playPreloader()
+        .then(() => {
+          handleDirectLinkAccordion();
+        })
+        .catch(() => {
+          handleDirectLinkAccordion();
+        });
     } else {
       preloaderCalled = true;
       document.body.classList.remove('loading');
+      handleDirectLinkAccordion();
     }
   }
 

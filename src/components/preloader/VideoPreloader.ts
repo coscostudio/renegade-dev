@@ -1,5 +1,6 @@
 import { gsap } from 'gsap';
 
+import { directLinkHandler } from '../../utils/directLinkHandler';
 import {
   loadingCoordinator,
   PreloaderState as GlobalPreloaderState,
@@ -16,6 +17,7 @@ enum PreloaderState {
   PAUSED, // Video is paused due to visibility
   EXITING, // Exit animation in progress
   COMPLETED, // Preloader finished
+  SKIPPED, // Preloader was skipped
 }
 
 /**
@@ -259,6 +261,9 @@ export class VideoPreloader {
         break;
       case PreloaderState.COMPLETED:
         loadingCoordinator.setPreloaderState(GlobalPreloaderState.COMPLETED);
+        break;
+      case PreloaderState.SKIPPED:
+        loadingCoordinator.setPreloaderState(GlobalPreloaderState.SKIPPED);
         break;
     }
   }
@@ -747,9 +752,65 @@ export class VideoPreloader {
   }
 
   /**
+   * Skip preloader immediately and reveal the page
+   */
+  private skipPreloader(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      // Set state to skipped
+      this.setState(PreloaderState.SKIPPED);
+
+      // Find elements
+      const preloader = document.querySelector('.preloader-container') as HTMLElement;
+      const pageWrapper = document.querySelector('.page-wrapper') as HTMLElement;
+
+      if (preloader && pageWrapper) {
+        // Get computed style for pageWrapper
+        const computedStyle = window.getComputedStyle(pageWrapper);
+        const originalWidth = computedStyle.width;
+
+        // Immediately clean up styles without animation
+        pageWrapper.style.position = 'static';
+        pageWrapper.style.width = originalWidth;
+        pageWrapper.style.transform = 'none';
+        pageWrapper.style.opacity = '1';
+        pageWrapper.style.visibility = 'visible';
+        document.body.classList.remove('loading');
+
+        // Remove preloader immediately
+        if (preloader.parentNode) {
+          preloader.parentNode.removeChild(preloader);
+        }
+
+        // Clean up resources
+        this.cleanup();
+      } else {
+        // Just ensure loading class is removed
+        document.body.classList.remove('loading');
+
+        // Make page wrapper visible if it exists
+        if (pageWrapper) {
+          pageWrapper.style.transform = 'none';
+          pageWrapper.style.opacity = '1';
+          pageWrapper.style.visibility = 'visible';
+        }
+      }
+
+      resolve();
+    });
+  }
+
+  /**
    * Public method to start the preloader
    */
   async playPreloader(): Promise<void> {
+    // Check if we should skip preloader for direct links
+    if (directLinkHandler.shouldSkipPreloader()) {
+      console.log('Skipping preloader for direct link');
+      document.body.classList.remove('loading');
+      loadingCoordinator.skipPreloader();
+      return this.skipPreloader();
+    }
+
     // Skip for legal page
     if (
       window.location.pathname.includes('/legal') ||
@@ -757,8 +818,8 @@ export class VideoPreloader {
       document.body.getAttribute('data-barba-namespace') === 'legal'
     ) {
       document.body.classList.remove('loading');
-      loadingCoordinator.skipPreloader(); // Inform coordinator preloader is skipped
-      return Promise.resolve();
+      loadingCoordinator.skipPreloader();
+      return this.skipPreloader();
     }
 
     // Set IN_PROGRESS state immediately to block other loading
