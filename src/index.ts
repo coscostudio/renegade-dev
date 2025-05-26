@@ -516,8 +516,6 @@ function handleDirectLinkAccordion() {
   }
 
   if (directLinkHandler.hasValidDirectLink() && !directLinkHandler.hasOpenedAccordion()) {
-    console.log('Processing direct link for accordion');
-
     // For modified preloader sequence, coordinate with preloader
     if (directLinkHandler.shouldUseModifiedPreloader()) {
       // Wait for accordion initialization to complete, then set up coordination

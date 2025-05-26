@@ -14,7 +14,6 @@ export class DirectLinkHandler {
     if (params.event && isValidEventId(params.event)) {
       this.targetEventId = params.event;
       this.hasDirectLink = true;
-      console.log(`Direct link detected: ${params.event}`);
     }
   }
 
@@ -66,15 +65,12 @@ export class DirectLinkHandler {
   public async openTargetAccordion(coordinateWithPreloader: boolean = false): Promise<void> {
     if (!this.targetEventId || this.accordionOpened) return;
 
-    console.log(`Attempting to open accordion: ${this.targetEventId}`);
-
     // Wait for DOM to be ready
     await this.waitForDOM();
 
     // Find the accordion item
     const accordionItem = document.getElementById(this.targetEventId);
     if (!accordionItem || !accordionItem.classList.contains('js-accordion-item')) {
-      console.warn(`Accordion item with ID "${this.targetEventId}" not found`);
       return;
     }
 
@@ -83,7 +79,6 @@ export class DirectLinkHandler {
 
     // Check if accordion functionality is available
     if (!this.isAccordionReady()) {
-      console.warn('Accordion functionality not ready yet, retrying...');
       // Retry after a longer delay
       setTimeout(() => {
         this.openTargetAccordion(coordinateWithPreloader);
@@ -107,8 +102,6 @@ export class DirectLinkHandler {
    * Execute coordinated sequence with preloader slide-up
    */
   private executeCoordinatedSequence(accordionItem: HTMLElement): void {
-    console.log(`Executing coordinated sequence for: ${this.targetEventId}`);
-
     // Get accordion position for smooth transition
     const accordionRect = accordionItem.getBoundingClientRect();
     const scrollTarget = window.pageYOffset + accordionRect.top;
@@ -125,8 +118,6 @@ export class DirectLinkHandler {
    * Execute standard accordion opening
    */
   private executeStandardOpening(accordionItem: HTMLElement): void {
-    console.log(`Executing standard opening for: ${this.targetEventId}`);
-
     // Scroll to the accordion item first
     accordionItem.scrollIntoView({
       behavior: 'smooth',
@@ -135,7 +126,6 @@ export class DirectLinkHandler {
 
     // Wait for scroll to complete then trigger click
     setTimeout(() => {
-      console.log(`Triggering click on accordion: ${this.targetEventId}`);
       accordionItem.click();
     }, 500);
   }
@@ -190,7 +180,6 @@ export class DirectLinkHandler {
   public static setAccordionSlug(accordionId: string): void {
     if (isValidEventId(accordionId)) {
       setEventInURL(accordionId);
-      console.log(`Set URL slug: ${accordionId}`);
     }
   }
 
@@ -199,7 +188,6 @@ export class DirectLinkHandler {
    */
   public static clearAccordionSlug(): void {
     clearEventFromURL();
-    console.log('Cleared URL slug');
   }
 
   /**
@@ -208,8 +196,6 @@ export class DirectLinkHandler {
   public completeCoordinatedOpening(): void {
     const accordionItem = (window as any).__directLinkAccordionItem;
     if (accordionItem) {
-      console.log(`Completing coordinated opening for: ${this.targetEventId}`);
-
       // Trigger the accordion click
       accordionItem.click();
 

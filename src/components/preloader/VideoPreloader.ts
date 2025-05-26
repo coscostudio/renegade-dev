@@ -933,7 +933,6 @@ export class VideoPreloader {
   async playPreloader(): Promise<void> {
     // Check if we should use modified preloader sequence for direct links
     if (directLinkHandler.shouldUseModifiedPreloader()) {
-      console.log('Using modified preloader sequence for direct link');
       loadingCoordinator.setPreloaderState(GlobalPreloaderState.IN_PROGRESS);
       return this.executeLogoOnlySequence();
     }
