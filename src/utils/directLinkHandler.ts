@@ -1,4 +1,4 @@
-import { cleanURL, getEventParams, isValidEventId } from './urlParams';
+import { getEventParams, isValidEventId, setEventInURL } from './urlParams';
 
 /**
  * Handle direct linking to accordion items
@@ -40,10 +40,17 @@ export class DirectLinkHandler {
   }
 
   /**
-   * Should skip preloader for direct links
+   * Should use modified preloader sequence for direct links (logo only, no video)
+   */
+  public shouldUseModifiedPreloader(): boolean {
+    return this.hasDirectLink;
+  }
+
+  /**
+   * Should skip preloader entirely (keeping for backward compatibility, now returns false)
    */
   public shouldSkipPreloader(): boolean {
-    return this.hasDirectLink;
+    return false; // We now use modified preloader instead of skipping
   }
 
   /**
@@ -54,9 +61,9 @@ export class DirectLinkHandler {
   }
 
   /**
-   * Open the target accordion
+   * Open the target accordion with coordinated preloader transition
    */
-  public async openTargetAccordion(): Promise<void> {
+  public async openTargetAccordion(coordinateWithPreloader: boolean = false): Promise<void> {
     if (!this.targetEventId || this.accordionOpened) return;
 
     console.log(`Attempting to open accordion: ${this.targetEventId}`);
@@ -79,13 +86,46 @@ export class DirectLinkHandler {
       console.warn('Accordion functionality not ready yet, retrying...');
       // Retry after a longer delay
       setTimeout(() => {
-        this.openTargetAccordion();
+        this.openTargetAccordion(coordinateWithPreloader);
       }, 1000);
       return;
     }
 
     // Mark as opened to prevent multiple attempts
     this.accordionOpened = true;
+
+    if (coordinateWithPreloader) {
+      // Coordinated sequence with preloader slide-up
+      this.executeCoordinatedSequence(accordionItem);
+    } else {
+      // Standard opening (for non-preloader contexts)
+      this.executeStandardOpening(accordionItem);
+    }
+  }
+
+  /**
+   * Execute coordinated sequence with preloader slide-up
+   */
+  private executeCoordinatedSequence(accordionItem: HTMLElement): void {
+    console.log(`Executing coordinated sequence for: ${this.targetEventId}`);
+
+    // Get accordion position for smooth transition
+    const accordionRect = accordionItem.getBoundingClientRect();
+    const scrollTarget = window.pageYOffset + accordionRect.top;
+
+    // Store reference for preloader coordination
+    (window as any).__directLinkScrollTarget = scrollTarget;
+    (window as any).__directLinkAccordionItem = accordionItem;
+
+    // The actual accordion opening will be triggered by the preloader
+    // when it completes its slide-up animation
+  }
+
+  /**
+   * Execute standard accordion opening
+   */
+  private executeStandardOpening(accordionItem: HTMLElement): void {
+    console.log(`Executing standard opening for: ${this.targetEventId}`);
 
     // Scroll to the accordion item first
     accordionItem.scrollIntoView({
@@ -97,12 +137,6 @@ export class DirectLinkHandler {
     setTimeout(() => {
       console.log(`Triggering click on accordion: ${this.targetEventId}`);
       accordionItem.click();
-
-      // Clean URL after successful opening
-      setTimeout(() => {
-        cleanURL();
-        console.log('URL cleaned after accordion opened');
-      }, 1500);
     }, 500);
   }
 
@@ -148,6 +182,33 @@ export class DirectLinkHandler {
         checkReady();
       }
     });
+  }
+
+  /**
+   * Set URL slug when accordion opens (for social sharing)
+   */
+  public static setAccordionSlug(accordionId: string): void {
+    if (isValidEventId(accordionId)) {
+      setEventInURL(accordionId);
+      console.log(`Set URL slug: ${accordionId}`);
+    }
+  }
+
+  /**
+   * Complete the coordinated opening sequence (called by preloader)
+   */
+  public completeCoordinatedOpening(): void {
+    const accordionItem = (window as any).__directLinkAccordionItem;
+    if (accordionItem) {
+      console.log(`Completing coordinated opening for: ${this.targetEventId}`);
+
+      // Trigger the accordion click
+      accordionItem.click();
+
+      // Clean up global references
+      delete (window as any).__directLinkScrollTarget;
+      delete (window as any).__directLinkAccordionItem;
+    }
   }
 
   /**

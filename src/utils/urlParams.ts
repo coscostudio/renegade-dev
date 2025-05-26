@@ -1,4 +1,6 @@
 // Utility to handle URL parameters for direct linking
+import { isValidAccordionId } from './accordionConfig';
+
 export interface EventParams {
   event: string | null;
 }
@@ -17,36 +19,16 @@ export function getEventParams(): EventParams {
  * Validate if event parameter corresponds to a valid accordion
  */
 export function isValidEventId(eventId: string): boolean {
-  const validEvents = [
-    'rae-sremmurd',
-    'vtss',
-    'chase-satus-venice-beach',
-    'sheck-wes',
-    'i-hate-models',
-    'beltran',
-    'j-balvin',
-    'converse',
-    'elements-festival',
-    'denzel-curry',
-    'mochakk',
-    'nia-archives',
-    'eli-brown',
-    'skream',
-    'carlita',
-    'chase-status-brooklyn-banks',
-    '02-24-24',
-    'fred-yachty',
-    'fred-again',
-  ];
-  return validEvents.includes(eventId);
+  return isValidAccordionId(eventId);
 }
 
 /**
- * Clean URL by removing query parameters
+ * Add event parameter to URL for social sharing and context
  */
-export function cleanURL(): void {
+export function setEventInURL(eventId: string): void {
   if (window.history && window.history.pushState) {
-    const url = window.location.protocol + '//' + window.location.host + window.location.pathname;
-    window.history.pushState({ path: url }, '', url);
+    const url = new URL(window.location.href);
+    url.searchParams.set('event', eventId);
+    window.history.pushState({ path: url.toString() }, '', url.toString());
   }
 }

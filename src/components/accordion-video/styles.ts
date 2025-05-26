@@ -47,18 +47,19 @@ export function addAccordionStyles(): void {
     `;
   document.head.appendChild(loadingStyle);
 
-  // Add accordion component styles
+  // Add accordion component styles - minimal since Webflow handles layout
   const accordionStyle = document.createElement('style');
   accordionStyle.id = 'accordion-styles';
   accordionStyle.textContent = `
+      /* DON'T modify .accordion or .js-accordion - Webflow handles flexbox/gap */
+      
       .js-accordion-item {
+        /* Don't modify background, margins, or gaps - Webflow handles this */
         min-height: 4rem;
-        background-color: transparent;
         transition: background-color 0.3s ease, color 0.3s ease;
         font-size: 0;
         line-height: 0;
         position: relative;
-        border-top: 0.5rem solid #fafafa;
         overflow: hidden;
       }
       
@@ -71,7 +72,7 @@ export function addAccordionStyles(): void {
       .js-accordion-item > * {
         font-size: 1rem;
         line-height: normal;
-        transition: color 0.3s ease; /* Add transition for all child elements */
+        transition: color 0.3s ease;
       }
       
       /* Modify hover styles to only apply on non-touch devices */
@@ -102,7 +103,6 @@ export function addAccordionStyles(): void {
         min-height: 4rem;
         background-color: #0F0F0F !important;
         color: #fafafa !important;
-        border-top: none !important;
       }
       
       .js-accordion-item.active * {
@@ -114,13 +114,9 @@ export function addAccordionStyles(): void {
           min-height: 6.125rem;
         }
       }
-   
-      .js-accordion-item.active + .js-accordion-item {
-        border-top: none !important;
-      }
       
       .js-accordion-body {
-        top: -1px !important;
+        top: 0;
         height: calc(101vh + 1rem);
         height: calc(101dvh + 1rem);
         width: 100%;
@@ -131,7 +127,6 @@ export function addAccordionStyles(): void {
         display: none;
         vertical-align: top;
         line-height: 0;
-        top: 0;
         left: 0;
         will-change: height;
         transform-origin: top;
@@ -143,10 +138,11 @@ export function addAccordionStyles(): void {
       
       .js-accordion-body .event-video {
         position: absolute;
-        top: 0;
+        /* Extend video by 0.5px on top and bottom to cover gaps */
+        top: -0.5px;
         left: 0;
         width: 100%;
-        height: 100%;
+        height: calc(100% + 1px); /* +1px total (0.5px top + 0.5px bottom) */
         margin: 0;
         padding: 0;
         object-fit: cover;

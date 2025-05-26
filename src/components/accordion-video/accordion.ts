@@ -3,6 +3,7 @@ import { Flip } from 'gsap/Flip';
 import { ScrollToPlugin } from 'gsap/ScrollToPlugin';
 import Hls from 'hls.js';
 
+import { DirectLinkHandler } from '../../utils/directLinkHandler';
 import {
   cleanupAccordionHLS,
   initializeAccordionHLS,
@@ -874,8 +875,6 @@ function createAccordionBehavior() {
       });
     },
 
-    // Updated toggle method for createAccordionBehavior
-
     toggle($clicked) {
       if (isAnimating) return;
       isAnimating = true;
@@ -893,11 +892,17 @@ function createAccordionBehavior() {
       const isOpening = !$clicked.hasClass('active');
       let resizeObserver: ResizeObserver;
 
-      // Animation timing parameters
+      // Animation timing parameters - KEEP ORIGINAL VALUES
       const animDuration = 1;
       const animEase = 'expo.inOut';
 
       if (isOpening) {
+        // Set URL slug for social sharing
+        const accordionId = $clicked.attr('id');
+        if (accordionId) {
+          DirectLinkHandler.setAccordionSlug(accordionId);
+        }
+
         // CRITICAL FIX: Immediately hide loader before any animations start
         if (loaderElement) {
           // Force styles with !important to prevent inheritance issues
@@ -1006,10 +1011,11 @@ function createAccordionBehavior() {
               });
           }
 
+          // 5. RESTORE ORIGINAL FLIP ANIMATION LOGIC
           const openState = Flip.getState(accordionBody);
           gsap.set(accordionBody, { height: getViewportHeight() });
 
-          // 5. Handle the opening animation
+          // Handle the opening animation - ORIGINAL SMOOTH LOGIC
           const openTl = gsap.timeline();
           openTl
             .to(
@@ -1124,10 +1130,11 @@ function createAccordionBehavior() {
             height: 0,
           });
 
+          // RESTORE ORIGINAL FLIP ANIMATION
           const openState = Flip.getState(accordionBody);
           gsap.set(accordionBody, { height: getViewportHeight() });
 
-          // Synchronized animations that finish together
+          // Synchronized animations that finish together - ORIGINAL LOGIC
           openTl
             .to(
               window,

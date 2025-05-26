@@ -800,15 +800,142 @@ export class VideoPreloader {
   }
 
   /**
+   * Execute logo-only preloader sequence for direct links
+   */
+  private async executeLogoOnlySequence(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      // Set state
+      this.setState(PreloaderState.LOADING);
+
+      // Find elements
+      const preloader = document.querySelector('.preloader-container') as HTMLElement;
+      const pageWrapper = document.querySelector('.page-wrapper') as HTMLElement;
+      const video = preloader?.querySelector('.preloader-video') as HTMLVideoElement;
+
+      if (!preloader || !pageWrapper) {
+        this.setState(PreloaderState.COMPLETED);
+        resolve();
+        return;
+      }
+
+      // Hide video if present
+      if (video) {
+        video.style.display = 'none';
+      }
+
+      // Initialize styles and setup
+      this.init();
+
+      // Save original styles
+      const computedStyle = window.getComputedStyle(pageWrapper);
+      const originalWidth = computedStyle.width;
+
+      // Set loading class
+      document.body.classList.add('loading');
+
+      // Position page wrapper
+      const preloaderHeight = preloader.offsetHeight;
+      gsap.set(pageWrapper, {
+        y: preloaderHeight,
+        position: 'fixed',
+        width: '100%',
+        opacity: 1,
+        visibility: 'visible',
+      });
+
+      // Show logo only for a brief moment
+      setTimeout(() => {
+        this.setState(PreloaderState.EXITING);
+
+        // Get scroll target if set by direct link handler
+        const scrollTarget = (window as any).__directLinkScrollTarget || 0;
+
+        // Execute coordinated slide-up animation
+        this.executeCoordinatedExit(preloader, pageWrapper, originalWidth, scrollTarget).then(
+          () => {
+            // Complete the coordinated opening
+            if (directLinkHandler.hasValidDirectLink()) {
+              directLinkHandler.completeCoordinatedOpening();
+            }
+            resolve();
+          }
+        );
+      }, 800); // Brief pause to show logo
+    });
+  }
+
+  /**
+   * Execute coordinated exit animation with scroll positioning
+   */
+  private async executeCoordinatedExit(
+    preloader: HTMLElement,
+    pageWrapper: HTMLElement,
+    originalWidth: string,
+    scrollTarget: number
+  ): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const preloaderHeight = preloader.offsetHeight;
+
+      const tl = gsap.timeline({
+        onComplete: () => {
+          // Clean up
+          pageWrapper.style.position = 'static';
+          pageWrapper.style.width = originalWidth;
+          pageWrapper.style.transform = 'none';
+          document.body.classList.remove('loading');
+
+          // Remove preloader
+          preloader.remove();
+
+          // Set completed state
+          this.setState(PreloaderState.COMPLETED);
+
+          // Clean up resources and event listeners
+          this.cleanup();
+
+          resolve();
+        },
+      });
+
+      // Coordinated slide animation with scroll positioning
+      tl.to(preloader, {
+        y: -preloaderHeight,
+        duration: this.exitAnimationDuration,
+        ease: 'expo.inOut',
+      })
+        .to(
+          pageWrapper,
+          {
+            y: 0,
+            duration: this.exitAnimationDuration,
+            ease: 'expo.inOut',
+          },
+          '<'
+        )
+        .to(
+          window,
+          {
+            scrollTo: {
+              y: scrollTarget,
+              autoKill: false,
+            },
+            duration: this.exitAnimationDuration,
+            ease: 'expo.inOut',
+          },
+          '<'
+        );
+    });
+  }
+
+  /**
    * Public method to start the preloader
    */
   async playPreloader(): Promise<void> {
-    // Check if we should skip preloader for direct links
-    if (directLinkHandler.shouldSkipPreloader()) {
-      console.log('Skipping preloader for direct link');
-      document.body.classList.remove('loading');
-      loadingCoordinator.skipPreloader();
-      return this.skipPreloader();
+    // Check if we should use modified preloader sequence for direct links
+    if (directLinkHandler.shouldUseModifiedPreloader()) {
+      console.log('Using modified preloader sequence for direct link');
+      loadingCoordinator.setPreloaderState(GlobalPreloaderState.IN_PROGRESS);
+      return this.executeLogoOnlySequence();
     }
 
     // Skip for legal page

@@ -1,3 +1,4 @@
+// src/index.ts
 import barba from '@barba/core';
 import { restartWebflow } from '@finsweet/ts-utils';
 import { gsap } from 'gsap';
@@ -517,10 +518,18 @@ function handleDirectLinkAccordion() {
   if (directLinkHandler.hasValidDirectLink() && !directLinkHandler.hasOpenedAccordion()) {
     console.log('Processing direct link for accordion');
 
-    // Wait for accordion initialization to complete
-    setTimeout(() => {
-      directLinkHandler.openTargetAccordion();
-    }, 1000);
+    // For modified preloader sequence, coordinate with preloader
+    if (directLinkHandler.shouldUseModifiedPreloader()) {
+      // Wait for accordion initialization to complete, then set up coordination
+      setTimeout(() => {
+        directLinkHandler.openTargetAccordion(true); // true = coordinate with preloader
+      }, 500);
+    } else {
+      // Standard opening for non-preloader contexts
+      setTimeout(() => {
+        directLinkHandler.openTargetAccordion(false); // false = standard opening
+      }, 1000);
+    }
   }
 }
 
@@ -545,17 +554,21 @@ document.addEventListener('DOMContentLoaded', () => {
           !archiveGridInitializing
         ) {
           initArchiveViewForDirectLoad(false);
-        } else if (!isArchivePage()) {
-          // For non-archive pages (like index page with direct links), handle accordion opening
+        } else if (!isArchivePage() && !directLinkHandler.shouldUseModifiedPreloader()) {
+          // For non-archive pages without modified preloader, handle accordion opening
           handleDirectLinkAccordion();
         }
+        // Note: For modified preloader sequence, accordion opening is handled by the coordinated sequence
       });
 
       // Start the preloader
       playPreloader()
         .then(() => {
-          // After preloader completes, handle direct link accordion opening
-          handleDirectLinkAccordion();
+          // After preloader completes, handle direct link accordion opening for standard sequences
+          if (!directLinkHandler.shouldUseModifiedPreloader()) {
+            handleDirectLinkAccordion();
+          }
+          // Note: Modified preloader sequence handles accordion opening internally
         })
         .catch((e) => {
           // If preloader fails, make sure we still initialize the grid or handle direct links
