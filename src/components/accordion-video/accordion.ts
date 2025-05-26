@@ -8,6 +8,7 @@ import {
   cleanupAccordionHLS,
   initializeAccordionHLS,
   isHLSCleanupPending,
+  resetInitializationAttempts,
   startLoadingHLS,
 } from '../video/hlsVideoLoader';
 import { getAccordionVideoPlayer } from './index';
@@ -20,6 +21,9 @@ const initializedVideos = new Set<string>();
 
 // Track observer for viewport-based loading
 let intersectionObserver: IntersectionObserver | null = null;
+
+// Track active preparation attempts to prevent duplicates
+const activePreparations = new Set<string>();
 
 /**
  * Setup touch-specific handlers for accordion items
@@ -264,7 +268,63 @@ function verifyPosition($element: JQuery<HTMLElement>): void {
 }
 
 /**
- * Prepare a video for playback without starting the fade
+ * Close accordion gracefully when video initialization fails
+ */
+function closeAccordionOnFailure(
+  $accordionItem: JQuery<HTMLElement>,
+  reason: string = 'Video initialization timeout'
+): void {
+  console.log(`Closing accordion due to: ${reason}`);
+
+  // Remove active state immediately
+  $accordionItem.removeClass('active video-playing');
+
+  // Clear URL
+  DirectLinkHandler.clearAccordionSlug();
+
+  // Find accordion elements
+  const accordionBody = $accordionItem.find('.js-accordion-body')[0];
+  const accordionHeader = $accordionItem.find('.js-accordion-header')[0];
+  const loaderElement = $accordionItem.find('.accordion-loader')[0];
+
+  // Hide loader immediately
+  if (loaderElement) {
+    loaderElement.style.opacity = '0';
+    loaderElement.style.visibility = 'hidden';
+    loaderElement.classList.remove('is-loading');
+  }
+
+  // Animate accordion closed with quick timing
+  const closeTl = gsap.timeline();
+  closeTl
+    .to(
+      accordionHeader,
+      {
+        paddingTop: '0rem',
+        duration: 0.5,
+        ease: 'expo.out',
+      },
+      0
+    )
+    .to(
+      accordionBody,
+      {
+        height: 0,
+        duration: 0.5,
+        ease: 'expo.out',
+        onComplete: () => {
+          gsap.set(accordionBody, {
+            clearProps: 'all',
+            display: 'none',
+          });
+        },
+      },
+      0
+    );
+}
+
+/**
+ * Prepare a video for playback with aggressive timeout handling
  */
 export async function prepareVideo(
   videoElement: HTMLVideoElement | null,
@@ -285,93 +345,118 @@ export async function prepareVideo(
     }
   }
 
-  // Clear any existing timeouts
-  if ((videoElement as any)._loaderTimerId) {
-    clearTimeout((videoElement as any)._loaderTimerId);
-    delete (videoElement as any)._loaderTimerId;
+  const videoId = videoElement.id || `video-${Math.random().toString(36).substring(2, 9)}`;
+  if (!videoElement.id) videoElement.id = videoId;
+
+  // Prevent duplicate preparations
+  if (activePreparations.has(videoId)) {
+    console.log(`Video ${videoId} is already being prepared, skipping duplicate`);
+    return null;
   }
 
-  // Clear any existing event listeners
-  if ((videoElement as any)._bufferingHandler) {
-    videoElement.removeEventListener('waiting', (videoElement as any)._bufferingHandler);
-    delete (videoElement as any)._bufferingHandler;
-  }
+  activePreparations.add(videoId);
+  console.log(`Starting video preparation for ${videoId}`);
 
-  if ((videoElement as any)._playingHandler) {
-    videoElement.removeEventListener('playing', (videoElement as any)._playingHandler);
-    delete (videoElement as any)._playingHandler;
-  }
+  // AGGRESSIVE MASTER TIMEOUT - if nothing happens in 15 seconds, force close accordion
+  const masterTimeoutId = setTimeout(() => {
+    console.warn(`MASTER TIMEOUT: Video ${videoId} failed to prepare within 15 seconds`);
+    activePreparations.delete(videoId);
 
-  // Force opacity to 0 initially
-  videoElement.style.opacity = '0';
-  videoElement.style.transition = 'opacity 0.75s cubic-bezier(0.16, 1, 0.3, 1)';
-
-  // LOADER HANDLING - Direct JavaScript approach
-  if (loaderElement) {
-    // Store the loader element for later use
-    (videoElement as any)._loaderElement = loaderElement;
-
-    // Force reset the loader state first
-    loaderElement.setAttribute(
-      'style',
-      'transition: none !important; ' +
-        'opacity: 0 !important; ' +
-        'visibility: hidden !important; ' +
-        'pointer-events: none !important;'
-    );
-    loaderElement.classList.remove('is-loading');
-
-    // Force a reflow to ensure styles are applied immediately
-    loaderElement.offsetHeight;
-
-    // Record when we started the loader display process
-    (videoElement as any)._loaderStartTime = Date.now();
-
-    // Create a promise to track video ready state
-    const videoReadyPromise = new Promise<void>((resolve) => {
-      if (videoElement.readyState >= 3) {
-        // Video is already ready enough to play
-        resolve();
-      } else {
-        // Wait for video to be ready enough
-        videoElement.addEventListener('canplay', () => resolve(), { once: true });
-      }
-    });
-
-    // Schedule delayed loader appearance
-    (videoElement as any)._loaderTimerId = setTimeout(() => {
-      // Check if video is already playing or ready before showing loader
-      if (videoElement.readyState < 3 && !videoElement.paused) {
-        // Reset the forced styles first to allow our new styles to work
-        loaderElement.removeAttribute('style');
-
-        // Apply new styles with a fresh slate
-        loaderElement.style.transition = 'opacity 1.0s cubic-bezier(0.16, 1, 0.3, 1)';
-        loaderElement.style.visibility = 'visible';
-        loaderElement.style.opacity = '1';
-        loaderElement.classList.add('is-loading');
-
-        // Make sure this loader is marked as having been properly shown after delay
-        loaderElement.dataset.delayDisplayed = 'true';
-
-        // Set up immediate fade out if video becomes ready
-        videoReadyPromise.then(() => {
-          if (loaderElement.style.opacity === '1') {
-            // Fast fade-out for loader
-            loaderElement.style.transition = 'opacity 0.1s ease-out';
-            loaderElement.style.opacity = '0';
-
-            setTimeout(() => {
-              loaderElement.style.visibility = 'hidden';
-              loaderElement.classList.remove('is-loading');
-            }, 100);
-          }
-        });
-      }
-    }, 500);
-  }
+    const accordionItem = videoElement.closest('.js-accordion-item');
+    if (accordionItem) {
+      closeAccordionOnFailure($(accordionItem), 'Master timeout - 15 seconds');
+    }
+  }, 15000);
 
   try {
+    // Clear any existing timeouts
+    if ((videoElement as any)._loaderTimerId) {
+      clearTimeout((videoElement as any)._loaderTimerId);
+      delete (videoElement as any)._loaderTimerId;
+    }
+
+    // Clear any existing event listeners
+    if ((videoElement as any)._bufferingHandler) {
+      videoElement.removeEventListener('waiting', (videoElement as any)._bufferingHandler);
+      delete (videoElement as any)._bufferingHandler;
+    }
+
+    if ((videoElement as any)._playingHandler) {
+      videoElement.removeEventListener('playing', (videoElement as any)._playingHandler);
+      delete (videoElement as any)._playingHandler;
+    }
+
+    // Force opacity to 0 initially
+    videoElement.style.opacity = '0';
+    videoElement.style.transition = 'opacity 0.75s cubic-bezier(0.16, 1, 0.3, 1)';
+
+    // LOADER HANDLING - Direct JavaScript approach
+    if (loaderElement) {
+      // Store the loader element for later use
+      (videoElement as any)._loaderElement = loaderElement;
+
+      // Force reset the loader state first
+      loaderElement.setAttribute(
+        'style',
+        'transition: none !important; ' +
+          'opacity: 0 !important; ' +
+          'visibility: hidden !important; ' +
+          'pointer-events: none !important;'
+      );
+      loaderElement.classList.remove('is-loading');
+
+      // Force a reflow to ensure styles are applied immediately
+      loaderElement.offsetHeight;
+
+      // Record when we started the loader display process
+      (videoElement as any)._loaderStartTime = Date.now();
+
+      // Create a promise to track video ready state
+      const videoReadyPromise = new Promise<void>((resolve) => {
+        if (videoElement.readyState >= 3) {
+          // Video is already ready enough to play
+          resolve();
+        } else {
+          // Wait for video to be ready enough
+          videoElement.addEventListener('canplay', () => resolve(), { once: true });
+        }
+      });
+
+      // Schedule delayed loader appearance
+      (videoElement as any)._loaderTimerId = setTimeout(() => {
+        // Check if video is already playing or ready before showing loader
+        if (videoElement.readyState < 3 && !videoElement.paused) {
+          console.log(`Showing loader for video ${videoId} after 500ms delay`);
+
+          // Reset the forced styles first to allow our new styles to work
+          loaderElement.removeAttribute('style');
+
+          // Apply new styles with a fresh slate
+          loaderElement.style.transition = 'opacity 1.0s cubic-bezier(0.16, 1, 0.3, 1)';
+          loaderElement.style.visibility = 'visible';
+          loaderElement.style.opacity = '1';
+          loaderElement.classList.add('is-loading');
+
+          // Make sure this loader is marked as having been properly shown after delay
+          loaderElement.dataset.delayDisplayed = 'true';
+
+          // Set up immediate fade out if video becomes ready
+          videoReadyPromise.then(() => {
+            if (loaderElement.style.opacity === '1') {
+              // Fast fade-out for loader
+              loaderElement.style.transition = 'opacity 0.1s ease-out';
+              loaderElement.style.opacity = '0';
+
+              setTimeout(() => {
+                loaderElement.style.visibility = 'hidden';
+                loaderElement.classList.remove('is-loading');
+              }, 100);
+            }
+          });
+        }
+      }, 500);
+    }
+
     // Reset video state completely
     videoElement.pause();
     videoElement.currentTime = 0;
@@ -386,34 +471,40 @@ export async function prepareVideo(
     videoElement.loop = true;
     videoElement.crossOrigin = 'anonymous';
 
-    // Generate a unique ID for tracking if not already present
-    const videoId = videoElement.id || `video-${Math.random().toString(36).substring(2, 9)}`;
-    if (!videoElement.id) videoElement.id = videoId;
-
     // Check for HLS source
     const hlsUrl = videoElement.getAttribute('data-hls-src');
     if (!hlsUrl) {
+      clearTimeout(masterTimeoutId);
+      activePreparations.delete(videoId);
       return null; // No HLS source available
     }
+
+    console.log(`Initializing HLS for video ${videoId} with URL: ${hlsUrl}`);
+
+    // Reset initialization attempts if this is a fresh preparation
+    resetInitializationAttempts(videoElement);
 
     // Check if this video has already been initialized for HLS
     let shouldInitialize = true;
 
     if (videoElement.dataset.hlsInitialized === 'true') {
+      console.log(`Video ${videoId} already initialized, starting loading`);
       // If initialized but not yet loading (was preloaded), start loading now
       startLoadingHLS(videoElement);
       shouldInitialize = false;
     } else if (isHLSCleanupPending(videoElement)) {
+      console.log(`Video ${videoId} cleanup pending, waiting...`);
       // If cleanup is pending, wait for it to complete
       await new Promise((resolve) => setTimeout(resolve, 300));
       shouldInitialize = true;
     }
 
     if (shouldInitialize) {
-      // Initialize new HLS instance with full loading
       try {
-        // Start HLS initialization with full quality
-        const hlsPromise = initializeAccordionHLS(videoElement, hlsUrl);
+        console.log(`Starting HLS initialization for video ${videoId}`);
+
+        // Start HLS initialization with retry logic
+        const hlsPromise = initializeAccordionHLS(videoElement, hlsUrl, false, 2); // Reduced to 2 retries
 
         // Track initialization
         initializedVideos.add(videoId);
@@ -424,8 +515,22 @@ export async function prepareVideo(
 
         // Wait for HLS initialization to complete
         await hlsPromise;
+
+        console.log(`HLS initialization successful for video ${videoId}`);
       } catch (error) {
-        // Silent error handling
+        console.error(`HLS initialization failed for video ${videoId}:`, error);
+
+        clearTimeout(masterTimeoutId);
+        activePreparations.delete(videoId);
+
+        // Find the accordion item for this video and close it
+        const accordionItem = videoElement.closest('.js-accordion-item');
+        if (accordionItem) {
+          const $accordionItem = $(accordionItem);
+          closeAccordionOnFailure($accordionItem, 'HLS initialization failed');
+        }
+
+        throw error; // Re-throw to be handled by caller
       }
     }
 
@@ -443,29 +548,56 @@ export async function prepareVideo(
     videoElement.muted = false;
     videoElement.volume = 1;
 
+    console.log(`Video preparation completed successfully for ${videoId}`);
+
+    clearTimeout(masterTimeoutId);
+    activePreparations.delete(videoId);
     return videoElement;
   } catch (error) {
-    // Silent error handling
-  }
+    console.error(`Video preparation failed for ${videoId}:`, error);
 
-  // In case of errors, cancel the loader timeout
-  if ((videoElement as any)._loaderTimerId) {
-    clearTimeout((videoElement as any)._loaderTimerId);
-    delete (videoElement as any)._loaderTimerId;
-  }
+    clearTimeout(masterTimeoutId);
+    activePreparations.delete(videoId);
 
-  if (loaderElement) {
-    loaderElement.style.opacity = '0';
-    loaderElement.style.visibility = 'hidden';
-    loaderElement.classList.remove('is-loading');
-  }
+    // In case of errors, cancel the loader timeout
+    if ((videoElement as any)._loaderTimerId) {
+      clearTimeout((videoElement as any)._loaderTimerId);
+      delete (videoElement as any)._loaderTimerId;
+    }
 
-  return null;
+    if (loaderElement) {
+      loaderElement.style.opacity = '0';
+      loaderElement.style.visibility = 'hidden';
+      loaderElement.classList.remove('is-loading');
+    }
+
+    // Re-throw to be handled by caller
+    throw error;
+  }
 }
 
-// Modified playAndFadeInVideo function
+// Modified playAndFadeInVideo function with additional safety checks
 export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void {
   if (!videoElement) return;
+
+  const videoId = videoElement.id || 'unknown';
+  console.log(`Starting playAndFadeInVideo for ${videoId}`);
+
+  // ADDITIONAL SAFETY: If video doesn't start playing within 10 seconds, close accordion
+  const playbackTimeoutId = setTimeout(() => {
+    console.warn(`Video ${videoId} didn't start playing within 10 seconds, closing accordion`);
+
+    const accordionItem = videoElement.closest('.js-accordion-item');
+    if (accordionItem && accordionItem.classList.contains('active')) {
+      closeAccordionOnFailure($(accordionItem), 'Video playback timeout - 10 seconds');
+    }
+  }, 10000);
+
+  // Clear timeout when video actually starts playing
+  const clearPlaybackTimeout = () => {
+    clearTimeout(playbackTimeoutId);
+    console.log(`Video ${videoId} started playing successfully`);
+  };
 
   // Ensure opacity is 0 before starting
   videoElement.style.opacity = '0';
@@ -498,6 +630,8 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
 
   // Set up fade-in with GSAP for better control
   const fadeIn = () => {
+    clearPlaybackTimeout(); // Video is ready, clear the timeout
+
     gsap.to(videoElement, {
       opacity: 1,
       volume: 1,
@@ -558,6 +692,7 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
 
   // Add stall detection
   const onBuffering = () => {
+    console.log(`Video ${videoId} is buffering`);
     if (loaderElement) {
       // Quickly show loader again if video stalls
       loaderElement.style.transition = 'opacity 0.75s ease-in';
@@ -568,6 +703,9 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
   };
 
   const onPlaying = () => {
+    console.log(`Video ${videoId} is playing`);
+    clearPlaybackTimeout(); // Video started playing, clear timeout
+
     if (loaderElement && loaderElement.style.opacity === '1') {
       // Hide loader with quick fade when video resumes playing
       loaderElement.style.transition = 'opacity 0.1s ease-out';
@@ -599,18 +737,22 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
 
   // Play with error handling
   try {
+    console.log(`Attempting to play video ${videoId}`);
     const playPromise = videoElement.play();
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
+          console.log(`Video ${videoId} play promise resolved`);
           fadeIn();
         })
-        .catch(() => {
+        .catch((playError) => {
+          console.warn(`Video ${videoId} play failed, trying with muted:`, playError);
           // If playback fails, try with muted first then unmute
           videoElement.muted = true;
           videoElement
             .play()
             .then(() => {
+              console.log(`Video ${videoId} playing muted successfully`);
               fadeIn();
 
               // Gradually unmute after playing
@@ -630,7 +772,8 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
                 });
               }, 500);
             })
-            .catch(() => {
+            .catch((mutedPlayError) => {
+              console.error(`Video ${videoId} failed to play even when muted:`, mutedPlayError);
               // Make video visible anyway as a last resort
               fadeIn();
 
@@ -640,13 +783,23 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
                 loaderElement.style.visibility = 'hidden';
                 loaderElement.classList.remove('is-loading');
               }
+
+              // Close accordion after a brief delay
+              setTimeout(() => {
+                const accordionItem = videoElement.closest('.js-accordion-item');
+                if (accordionItem && accordionItem.classList.contains('active')) {
+                  closeAccordionOnFailure($(accordionItem), 'Video playback failed');
+                }
+              }, 2000);
             });
         });
     } else {
       // Older browsers without Promise support
+      console.log(`Video ${videoId} using legacy play method`);
       fadeIn();
     }
   } catch (error) {
+    console.error(`Video ${videoId} play error:`, error);
     // Make video visible anyway if play fails
     fadeIn();
 
@@ -911,6 +1064,8 @@ function createAccordionBehavior() {
       if (isAnimating) return;
       isAnimating = true;
 
+      console.log(`Accordion toggle initiated for ${$clicked.attr('id')}`);
+
       // Simply remove hover-state class from all items - no need for complex selectors
       document.querySelectorAll('.hover-state').forEach((item) => {
         item.classList.remove('hover-state');
@@ -1031,21 +1186,24 @@ function createAccordionBehavior() {
             height: 0,
           });
 
-          // 4. Prepare the new video while accordion is animating
-          let preparedVideo: HTMLVideoElement | null = null;
-
+          // 4. Prepare the new video while accordion is animating - WITH ERROR HANDLING
           if (videoElement) {
-            // Start loading the video immediately
+            console.log(`Preparing video for accordion ${accordionId}`);
+            // Start loading the video immediately with error handling
             prepareVideo(videoElement, loaderElement)
               .then((video) => {
-                preparedVideo = video;
-                // Once we have the video ready, play and fade it in sync with the opening animation
-                if (preparedVideo) {
-                  playAndFadeInVideo(preparedVideo);
+                if (video) {
+                  console.log(`Video prepared successfully, starting playback for ${accordionId}`);
+                  playAndFadeInVideo(video);
+                } else {
+                  console.warn(`Video preparation returned null for ${accordionId}`);
                 }
               })
-              .catch(() => {
-                // Error handled silently
+              .catch((error) => {
+                console.error(`Video preparation failed for ${accordionId}:`, error);
+                // Video preparation failed - accordion should already be closed by prepareVideo function
+                // Reset animation state
+                isAnimating = false;
               });
           }
 
@@ -1139,20 +1297,23 @@ function createAccordionBehavior() {
           // No open accordion to close first, just open this one
           const targetPosition = $clicked.offset()?.top;
 
-          // Prepare the new video
-          let preparedVideo: HTMLVideoElement | null = null;
-
+          // Prepare the new video - WITH ERROR HANDLING
           if (videoElement) {
+            console.log(`Preparing video for first-open accordion ${$clicked.attr('id')}`);
             prepareVideo(videoElement, loaderElement)
               .then((video) => {
-                preparedVideo = video;
-                // Start video fade-in synchronized with accordion opening
-                if (preparedVideo) {
-                  playAndFadeInVideo(preparedVideo);
+                if (video) {
+                  console.log(`Video prepared successfully, starting playback`);
+                  playAndFadeInVideo(video);
+                } else {
+                  console.warn(`Video preparation returned null`);
                 }
               })
-              .catch(() => {
-                // Error handled silently
+              .catch((error) => {
+                console.error(`Video preparation failed:`, error);
+                // Video preparation failed - accordion should already be closed by prepareVideo function
+                // Reset animation state
+                isAnimating = false;
               });
           }
 

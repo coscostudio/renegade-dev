@@ -6,6 +6,9 @@ const activeHlsInstances = new Map<HTMLVideoElement, Hls>();
 // Track cleanup operations in progress
 const pendingCleanups = new Set<string>();
 
+// Track initialization attempts
+const initializationAttempts = new Map<string, number>();
+
 /**
  * Generate a unique ID for a video element
  */
@@ -23,6 +26,32 @@ export function isHLSCleanupPending(videoElement: HTMLVideoElement): boolean {
   return pendingCleanups.has(getVideoId(videoElement));
 }
 
+/**
+ * Reset initialization attempts for a video
+ */
+export function resetInitializationAttempts(videoElement: HTMLVideoElement): void {
+  const videoId = getVideoId(videoElement);
+  initializationAttempts.delete(videoId);
+}
+
+/**
+ * Get current initialization attempt count
+ */
+function getInitializationAttempt(videoElement: HTMLVideoElement): number {
+  const videoId = getVideoId(videoElement);
+  return initializationAttempts.get(videoId) || 0;
+}
+
+/**
+ * Increment initialization attempt count
+ */
+function incrementInitializationAttempt(videoElement: HTMLVideoElement): number {
+  const videoId = getVideoId(videoElement);
+  const attempts = (initializationAttempts.get(videoId) || 0) + 1;
+  initializationAttempts.set(videoId, attempts);
+  return attempts;
+}
+
 // Initialize HLS for a video element (general purpose)
 export async function initializeHLSVideo(
   videoElement: HTMLVideoElement,
@@ -34,6 +63,11 @@ export async function initializeHLSVideo(
     videoElement.playsInline = true;
     videoElement.setAttribute('playsinline', '');
     videoElement.preload = 'auto';
+
+    // Timeout for initialization
+    const initTimeout = setTimeout(() => {
+      reject(new Error('HLS initialization timeout'));
+    }, 8000);
 
     // Check if HLS is supported by the browser
     if (Hls.isSupported()) {
@@ -55,6 +89,7 @@ export async function initializeHLSVideo(
       // Handle errors
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
+          clearTimeout(initTimeout);
           reject(data);
         }
       });
@@ -63,6 +98,7 @@ export async function initializeHLSVideo(
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         // Store instance for cleanup
         activeHlsInstances.set(videoElement, hls);
+        clearTimeout(initTimeout);
         resolve();
       });
     }
@@ -74,12 +110,14 @@ export async function initializeHLSVideo(
       const onCanPlay = () => {
         videoElement.removeEventListener('canplay', onCanPlay);
         videoElement.removeEventListener('error', onError);
+        clearTimeout(initTimeout);
         resolve();
       };
 
       const onError = (err: any) => {
         videoElement.removeEventListener('canplay', onCanPlay);
         videoElement.removeEventListener('error', onError);
+        clearTimeout(initTimeout);
         reject(err);
       };
 
@@ -90,27 +128,34 @@ export async function initializeHLSVideo(
       if (videoElement.readyState >= 3) {
         videoElement.removeEventListener('canplay', onCanPlay);
         videoElement.removeEventListener('error', onError);
+        clearTimeout(initTimeout);
         resolve();
       }
     }
     // Fallback for unsupported browsers
     else {
+      clearTimeout(initTimeout);
       reject(new Error('HLS not supported'));
     }
   });
 }
 
 /**
- * Initialize HLS for an accordion video element with specific optimizations
+ * Initialize HLS for an accordion video element with specific optimizations and retry logic
  * @param videoElement The video element to initialize
  * @param hlsUrl The HLS URL
  * @param preloadOnly If true, only initialize and preload the first segment without full loading
+ * @param maxRetries Maximum number of retry attempts (default: 3)
  */
 export async function initializeAccordionHLS(
   videoElement: HTMLVideoElement,
   hlsUrl: string,
-  preloadOnly: boolean = false
+  preloadOnly: boolean = false,
+  maxRetries: number = 3
 ): Promise<void> {
+  const videoId = getVideoId(videoElement);
+  const currentAttempt = incrementInitializationAttempt(videoElement);
+
   return new Promise((resolve, reject) => {
     // Don't initialize if cleanup is in progress
     if (isHLSCleanupPending(videoElement)) {
@@ -118,7 +163,9 @@ export async function initializeAccordionHLS(
       setTimeout(() => {
         if (!isHLSCleanupPending(videoElement)) {
           // Try again after cleanup is complete
-          initializeAccordionHLS(videoElement, hlsUrl, preloadOnly).then(resolve).catch(reject);
+          initializeAccordionHLS(videoElement, hlsUrl, preloadOnly, maxRetries)
+            .then(resolve)
+            .catch(reject);
         } else {
           // If still pending, just resolve
           resolve();
@@ -154,6 +201,39 @@ export async function initializeAccordionHLS(
     videoElement.preload = preloadOnly ? 'metadata' : 'auto';
     videoElement.volume = 1; // Ensure full volume
 
+    // Timeout for initialization - longer for first attempt, shorter for retries
+    const timeoutDuration = currentAttempt === 1 ? 10000 : 6000;
+    const initTimeout = setTimeout(() => {
+      // Initialization timeout reached
+      if (currentAttempt < maxRetries) {
+        console.log(
+          `HLS initialization timeout (attempt ${currentAttempt}/${maxRetries}), retrying...`
+        );
+        // Cleanup current attempt
+        if (activeHlsInstances.has(videoElement)) {
+          try {
+            const hls = activeHlsInstances.get(videoElement);
+            if (hls) {
+              hls.destroy();
+              activeHlsInstances.delete(videoElement);
+            }
+          } catch (e) {
+            // Silent error handling
+          }
+        }
+
+        // Retry after a brief delay
+        setTimeout(() => {
+          initializeAccordionHLS(videoElement, hlsUrl, preloadOnly, maxRetries)
+            .then(resolve)
+            .catch(reject);
+        }, 500);
+      } else {
+        console.warn(`HLS initialization failed after ${maxRetries} attempts`);
+        reject(new Error(`HLS initialization timeout after ${maxRetries} attempts`));
+      }
+    }, timeoutDuration);
+
     // Check if HLS is supported
     if (Hls.isSupported()) {
       // Balanced settings for quality and efficiency
@@ -182,11 +262,11 @@ export async function initializeAccordionHLS(
         // Adaptive Bitrate Settings
         abrEwmaDefaultEstimate: 1000000, // 1Mbps initial estimate
 
-        // Error handling and recovery
-        manifestLoadingTimeOut: 8000,
-        manifestLoadingMaxRetry: 2,
-        fragLoadingTimeOut: 8000,
-        fragLoadingMaxRetry: 2,
+        // Error handling and recovery - more aggressive for retries
+        manifestLoadingTimeOut: currentAttempt === 1 ? 8000 : 5000,
+        manifestLoadingMaxRetry: currentAttempt === 1 ? 2 : 1,
+        fragLoadingTimeOut: currentAttempt === 1 ? 8000 : 5000,
+        fragLoadingMaxRetry: currentAttempt === 1 ? 2 : 1,
       };
 
       // Create HLS instance with our config
@@ -203,23 +283,54 @@ export async function initializeAccordionHLS(
         });
       }
 
-      // Handle errors
+      // Handle errors with retry logic
       hls.on(Hls.Events.ERROR, (_event, data) => {
         // Only handle fatal errors
         if (data.fatal) {
-          // Special handling for buffer errors during accordion closing
+          clearTimeout(initTimeout);
+
+          // Special handling for recoverable errors
           if (data.type === 'mediaError') {
-            hls.recoverMediaError();
-            return;
+            try {
+              hls.recoverMediaError();
+              return;
+            } catch (e) {
+              // Recovery failed, continue to retry logic
+            }
           }
 
-          // Try to recover from network errors
-          if (data.type === 'networkError') {
-            hls.startLoad();
-            return;
+          // Try to recover from network errors once
+          if (data.type === 'networkError' && currentAttempt === 1) {
+            try {
+              hls.startLoad();
+              return;
+            } catch (e) {
+              // Recovery failed, continue to retry logic
+            }
           }
 
-          reject(data);
+          // If we can retry, do so
+          if (currentAttempt < maxRetries) {
+            console.log(`HLS error (attempt ${currentAttempt}/${maxRetries}), retrying...`, data);
+
+            // Cleanup current attempt
+            try {
+              hls.destroy();
+              activeHlsInstances.delete(videoElement);
+            } catch (e) {
+              // Silent error handling
+            }
+
+            // Retry after a brief delay
+            setTimeout(() => {
+              initializeAccordionHLS(videoElement, hlsUrl, preloadOnly, maxRetries)
+                .then(resolve)
+                .catch(reject);
+            }, 1000);
+          } else {
+            console.warn(`HLS error after ${maxRetries} attempts:`, data);
+            reject(data);
+          }
         }
       });
 
@@ -229,6 +340,9 @@ export async function initializeAccordionHLS(
         activeHlsInstances.set(videoElement, hls);
 
         if (preloadOnly) {
+          clearTimeout(initTimeout);
+          // Reset retry counter on success
+          initializationAttempts.delete(videoId);
           resolve();
         }
       });
@@ -236,16 +350,28 @@ export async function initializeAccordionHLS(
       // For full loading mode, wait for the first level to load
       if (!preloadOnly) {
         hls.on(Hls.Events.LEVEL_LOADED, () => {
+          clearTimeout(initTimeout);
+          // Reset retry counter on success
+          initializationAttempts.delete(videoId);
           resolve();
         });
       }
 
-      // Safety timeout
-      setTimeout(() => {
-        if (activeHlsInstances.has(videoElement) && preloadOnly) {
-          resolve();
-        }
-      }, 2000);
+      // Additional safety check - ensure video element is ready
+      if (!preloadOnly) {
+        const checkVideoReady = () => {
+          if (videoElement.readyState >= 2) {
+            // HAVE_CURRENT_DATA or higher
+            clearTimeout(initTimeout);
+            // Reset retry counter on success
+            initializationAttempts.delete(videoId);
+            resolve();
+          }
+        };
+
+        videoElement.addEventListener('loadeddata', checkVideoReady, { once: true });
+        videoElement.addEventListener('canplay', checkVideoReady, { once: true });
+      }
     }
     // For Safari with native HLS support
     else if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
@@ -253,6 +379,9 @@ export async function initializeAccordionHLS(
 
       // In preload mode, just set the source without loading
       if (preloadOnly) {
+        clearTimeout(initTimeout);
+        // Reset retry counter on success
+        initializationAttempts.delete(videoId);
         resolve();
         return;
       }
@@ -260,24 +389,58 @@ export async function initializeAccordionHLS(
       const onCanPlay = () => {
         videoElement.removeEventListener('canplay', onCanPlay);
         videoElement.removeEventListener('error', onError);
+        videoElement.removeEventListener('loadeddata', onLoadedData);
+        clearTimeout(initTimeout);
+        // Reset retry counter on success
+        initializationAttempts.delete(videoId);
+        resolve();
+      };
+
+      const onLoadedData = () => {
+        videoElement.removeEventListener('canplay', onCanPlay);
+        videoElement.removeEventListener('error', onError);
+        videoElement.removeEventListener('loadeddata', onLoadedData);
+        clearTimeout(initTimeout);
+        // Reset retry counter on success
+        initializationAttempts.delete(videoId);
         resolve();
       };
 
       const onError = (err: any) => {
         videoElement.removeEventListener('canplay', onCanPlay);
         videoElement.removeEventListener('error', onError);
-        reject(err);
+        videoElement.removeEventListener('loadeddata', onLoadedData);
+        clearTimeout(initTimeout);
+
+        // Retry logic for Safari
+        if (currentAttempt < maxRetries) {
+          console.log(`Safari HLS error (attempt ${currentAttempt}/${maxRetries}), retrying...`);
+          setTimeout(() => {
+            initializeAccordionHLS(videoElement, hlsUrl, preloadOnly, maxRetries)
+              .then(resolve)
+              .catch(reject);
+          }, 500);
+        } else {
+          console.warn(`Safari HLS error after ${maxRetries} attempts:`, err);
+          reject(err);
+        }
       };
 
       videoElement.addEventListener('canplay', onCanPlay);
+      videoElement.addEventListener('loadeddata', onLoadedData);
       videoElement.addEventListener('error', onError);
 
-      if (videoElement.readyState >= 3) {
+      if (videoElement.readyState >= 2) {
         videoElement.removeEventListener('canplay', onCanPlay);
         videoElement.removeEventListener('error', onError);
+        videoElement.removeEventListener('loadeddata', onLoadedData);
+        clearTimeout(initTimeout);
+        // Reset retry counter on success
+        initializationAttempts.delete(videoId);
         resolve();
       }
     } else {
+      clearTimeout(initTimeout);
       reject(new Error('HLS not supported'));
     }
   });
@@ -312,6 +475,9 @@ export function cleanupAccordionHLS(videoElement: HTMLVideoElement): Promise<voi
 
     // Mark this video as being cleaned up
     pendingCleanups.add(videoId);
+
+    // Reset initialization attempts
+    initializationAttempts.delete(videoId);
 
     // Get the HLS instance
     const hls = activeHlsInstances.get(videoElement);
