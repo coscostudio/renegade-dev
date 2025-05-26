@@ -56,11 +56,18 @@ export function addAccordionStyles(): void {
       .js-accordion-item {
         /* Don't modify background, margins, or gaps - Webflow handles this */
         min-height: 4rem;
-        transition: background-color 0.3s ease, color 0.3s ease;
+        transition: background-color 0.3s ease, color 0.3s ease, margin 0.3s ease;
         font-size: 0;
         line-height: 0;
         position: relative;
         overflow: hidden;
+      }
+      
+      /* Add margin adjustment for video-playing state */
+      .js-accordion-item.video-playing {
+        margin-top: -0.5px;
+        margin-bottom: -0.5px;
+        z-index: 10; /* Ensure it appears above adjacent items */
       }
       
       @media (max-width: 768px) {
@@ -138,11 +145,11 @@ export function addAccordionStyles(): void {
       
       .js-accordion-body .event-video {
         position: absolute;
-        /* Extend video by 0.5px on top and bottom to cover gaps */
-        top: -0.5px;
+        /* Remove border covering logic - now handled by accordion item margins */
+        top: 0;
         left: 0;
         width: 100%;
-        height: calc(100% + 1px); /* +1px total (0.5px top + 0.5px bottom) */
+        height: 100%;
         margin: 0;
         padding: 0;
         object-fit: cover;

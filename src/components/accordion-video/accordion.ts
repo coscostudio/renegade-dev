@@ -463,7 +463,7 @@ export async function prepareVideo(
   return null;
 }
 
-// Modified playAndFadeInVideo function in src/components/accordion-video/accordion.ts
+// Modified playAndFadeInVideo function
 export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void {
   if (!videoElement) return;
 
@@ -476,6 +476,9 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
 
   // Get the loader element reference if it exists
   const loaderElement = (videoElement as any)._loaderElement as HTMLElement | undefined;
+
+  // Find the accordion item container for border management
+  const accordionItem = videoElement.closest('.js-accordion-item') as HTMLElement;
 
   // Get loader start time to calculate elapsed time
   const loaderStartTime = (videoElement as any)._loaderStartTime || Date.now();
@@ -508,6 +511,11 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
         if (videoElement.muted) {
           videoElement.muted = false;
           videoElement.volume = 1;
+        }
+
+        // ADD VIDEO-PLAYING CLASS TO HIDE BORDERS AFTER FADE COMPLETES
+        if (accordionItem) {
+          accordionItem.classList.add('video-playing');
         }
       },
     });
@@ -654,6 +662,14 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
 export function fadeOutVideo(videoElement: HTMLVideoElement | null): void {
   if (!videoElement) return;
 
+  // Find the accordion item container for border management
+  const accordionItem = videoElement.closest('.js-accordion-item') as HTMLElement;
+
+  // REMOVE VIDEO-PLAYING CLASS IMMEDIATELY WHEN FADE-OUT STARTS
+  if (accordionItem) {
+    accordionItem.classList.remove('video-playing');
+  }
+
   // Cancel any pending loader timeout
   if ((videoElement as any)._loaderTimerId) {
     clearTimeout((videoElement as any)._loaderTimerId);
@@ -724,6 +740,14 @@ export function fadeOutVideo(videoElement: HTMLVideoElement | null): void {
 export function fadeOutAudioOnly(videoElement: HTMLVideoElement | null): void {
   if (!videoElement) return;
 
+  // Find the accordion item container for border management
+  const accordionItem = videoElement.closest('.js-accordion-item') as HTMLElement;
+
+  // REMOVE VIDEO-PLAYING CLASS WHEN AUDIO FADES OUT
+  if (accordionItem) {
+    accordionItem.classList.remove('video-playing');
+  }
+
   // Cancel any pending loader timeout
   if ((videoElement as any)._loaderTimerId) {
     clearTimeout((videoElement as any)._loaderTimerId);
@@ -783,6 +807,14 @@ export function fadeOutAudioOnly(videoElement: HTMLVideoElement | null): void {
  */
 export function resetVideo(videoElement: HTMLVideoElement | null): void {
   if (!videoElement) return;
+
+  // Find the accordion item container for border management
+  const accordionItem = videoElement.closest('.js-accordion-item') as HTMLElement;
+
+  // REMOVE VIDEO-PLAYING CLASS WHEN RESETTING
+  if (accordionItem) {
+    accordionItem.classList.remove('video-playing');
+  }
 
   // Make sure we completely stop the video
   videoElement.pause();
@@ -928,6 +960,9 @@ function createAccordionBehavior() {
             : null;
           const openBody = $openItem.find('.js-accordion-body')[0];
           const openHeader = $openItem.find('.js-accordion-header')[0];
+
+          // REMOVE VIDEO-PLAYING CLASS FROM CLOSING ACCORDION
+          $openItem.removeClass('video-playing');
 
           // CRITICAL: Precisely determine relationship between the accordions
           const clickedIndex = $('.js-accordion-item').index($clicked);
@@ -1183,6 +1218,9 @@ function createAccordionBehavior() {
             isAnimating = false;
           },
         });
+
+        // REMOVE VIDEO-PLAYING CLASS IMMEDIATELY WHEN CLOSING
+        $clicked.removeClass('video-playing');
 
         // 1. Start video fade-out synchronized with accordion closing
         if (videoElement) {
