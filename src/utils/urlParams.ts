@@ -32,3 +32,20 @@ export function setEventInURL(eventId: string): void {
     window.history.pushState({ path: url.toString() }, '', url.toString());
   }
 }
+
+/**
+ * Remove event parameter from URL when accordion is closed
+ */
+export function clearEventFromURL(): void {
+  if (window.history && window.history.pushState) {
+    const url = new URL(window.location.href);
+
+    // Only proceed if there's actually an event parameter to remove
+    if (url.searchParams.has('event')) {
+      url.searchParams.delete('event');
+
+      // Push the clean URL to history
+      window.history.pushState({ path: url.toString() }, '', url.toString());
+    }
+  }
+}

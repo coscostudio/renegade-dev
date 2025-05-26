@@ -1,4 +1,4 @@
-import { getEventParams, isValidEventId, setEventInURL } from './urlParams';
+import { clearEventFromURL, getEventParams, isValidEventId, setEventInURL } from './urlParams';
 
 /**
  * Handle direct linking to accordion items
@@ -192,6 +192,14 @@ export class DirectLinkHandler {
       setEventInURL(accordionId);
       console.log(`Set URL slug: ${accordionId}`);
     }
+  }
+
+  /**
+   * Clear URL slug when accordion closes (cleanup for navigation)
+   */
+  public static clearAccordionSlug(): void {
+    clearEventFromURL();
+    console.log('Cleared URL slug');
   }
 
   /**

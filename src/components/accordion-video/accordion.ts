@@ -964,6 +964,9 @@ function createAccordionBehavior() {
           // REMOVE VIDEO-PLAYING CLASS FROM CLOSING ACCORDION
           $openItem.removeClass('video-playing');
 
+          // CLEAR URL WHEN CLOSING PREVIOUS ACCORDION
+          DirectLinkHandler.clearAccordionSlug();
+
           // CRITICAL: Precisely determine relationship between the accordions
           const clickedIndex = $('.js-accordion-item').index($clicked);
           const openIndex = $('.js-accordion-item').index($openItem);
@@ -1221,6 +1224,9 @@ function createAccordionBehavior() {
 
         // REMOVE VIDEO-PLAYING CLASS IMMEDIATELY WHEN CLOSING
         $clicked.removeClass('video-playing');
+
+        // CLEAR URL WHEN CLOSING ACCORDION
+        DirectLinkHandler.clearAccordionSlug();
 
         // 1. Start video fade-out synchronized with accordion closing
         if (videoElement) {
