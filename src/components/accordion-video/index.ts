@@ -44,6 +44,16 @@ export const destroyAccordionVideoPlayer = (): void => {
     instance.destroy();
     instance = null;
   }
+
+  // Also clean up unmute overlay when destroying accordion
+  // Use dynamic import to avoid circular dependencies
+  import('../../utils/unmuteOverlayManager')
+    .then(({ unmuteOverlayManager }) => {
+      unmuteOverlayManager.cleanup();
+    })
+    .catch(() => {
+      // Silent error handling - unmute overlay manager might not be available
+    });
 };
 
 /**

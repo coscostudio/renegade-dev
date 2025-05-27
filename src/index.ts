@@ -7,7 +7,6 @@ import { Flip } from 'gsap/Flip';
 import { ScrollToPlugin } from 'gsap/ScrollToPlugin';
 
 // Import from components
-import { destroyAccordionVideoPlayer, initializeAccordion } from './components/accordion-video';
 import {
   destroyAccordionVideoPlayer,
   fadeOutAudioOnly,
@@ -28,6 +27,7 @@ import { cleanupHLSVideo } from './components/video/hlsVideoLoader';
 import { initializeVideo } from './components/video/videoLoader';
 import { ArchiveView } from './components/WebGLGrid/ArchiveView';
 import { directLinkHandler } from './utils/directLinkHandler';
+import { unmuteOverlayManager } from './utils/unmuteOverlayManager';
 
 /**
  * Add the grid loader styles
@@ -537,6 +537,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isLegalPage()) {
       preloaderCalled = true;
 
+      // Disable home link if on homepage (for direct page loads with preloader)
+      disableHomeLinkOnHomepage();
+
       // Set up exit animation observer for direct loads to archive page
       if (isArchivePage() && isInitialPageLoad) {
         setupEarlyGridInitialization();
@@ -606,95 +609,28 @@ window.addEventListener('unload', () => {
   videoCacheManager.cleanup();
 });
 
+// Handle window resize to update unmute overlay position
+window.addEventListener('resize', () => {
+  unmuteOverlayManager.updatePosition();
+});
+
 /**
- * Preload images to get their natural dimensions
- * This function loads each image, gets its dimensions, and then
- * creates image data objects with the correct dimensions
+ * Disable home link when on homepage
  */
-async function preloadImagesWithDimensions(): Promise<CMSImage[]> {
-  // Filter out duplicates to avoid loading the same image multiple times
-  const uniqueUrls = new Set();
-  const uniqueImages = renegadeImages.filter((item) => {
-    if (uniqueUrls.has(item.Image)) {
-      return false;
+function disableHomeLinkOnHomepage(): void {
+  // Only disable on homepage/index
+  const isHomepage =
+    window.location.pathname === '/' ||
+    window.location.pathname.includes('index') ||
+    document.body.getAttribute('data-barba-namespace') === 'index';
+
+  if (isHomepage) {
+    const homeLink = document.querySelector('.homelink');
+    if (homeLink) {
+      (homeLink as HTMLElement).style.pointerEvents = 'none';
+      (homeLink as HTMLElement).style.cursor = 'default';
     }
-    uniqueUrls.add(item.Image);
-    return true;
-  });
-
-  // Create an array to store results
-  const results: CMSImage[] = [];
-
-  // Load each image and get its dimensions
-  const loadPromises = uniqueImages.map((item, index) => {
-    return new Promise<void>((resolve) => {
-      const img = new Image();
-
-      // Set up load handler
-      img.onload = () => {
-        // Create the image data object with actual dimensions
-        results.push({
-          file: {
-            url: item.Image,
-            details: {
-              image: {
-                width: img.naturalWidth || 800,
-                height: img.naturalHeight || 1200,
-              },
-            },
-            contentType: 'image/jpeg',
-            color: item.Color || '#0F0F0F',
-          },
-        });
-        resolve();
-      };
-
-      // Set up error handler
-      img.onerror = () => {
-        // Use default dimensions if image fails to load
-        results.push({
-          file: {
-            url: item.Image,
-            details: {
-              image: {
-                width: 800,
-                height: 1200,
-              },
-            },
-            contentType: 'image/jpeg',
-            color: item.Color || '#0F0F0F',
-          },
-        });
-        resolve();
-      };
-
-      // Start loading
-      img.src = item.Image;
-
-      // For images that might be cached and load immediately
-      if (img.complete) {
-        results.push({
-          file: {
-            url: item.Image,
-            details: {
-              image: {
-                width: img.naturalWidth || 800,
-                height: img.naturalHeight || 1200,
-              },
-            },
-            contentType: 'image/jpeg',
-            color: item.Color || '#0F0F0F',
-          },
-        });
-        resolve();
-      }
-    });
-  });
-
-  // Wait for all images to either load or fail
-  await Promise.all(loadPromises);
-
-  return results;
+  }
 }
 
 // Barba initialization
@@ -726,6 +662,9 @@ barba.init({
       afterEnter() {
         restartWebflow();
         initializeAccordion();
+
+        // Disable home link on homepage
+        disableHomeLinkOnHomepage();
 
         // Handle direct link accordion opening after accordion is initialized
         setTimeout(() => {
@@ -856,6 +795,9 @@ barba.hooks.before((data) => {
   // Ensure clicks are blocked at the very start of any transition
   blockClicks();
 
+  // Clean up unmute overlay before any page transition
+  unmuteOverlayManager.cleanup();
+
   // For Archive page, just mark as transitioning but DON'T modify visuals
   if (data.current?.namespace === 'archive' && (window as any).archiveView) {
     try {
@@ -967,6 +909,9 @@ document.addEventListener('DOMContentLoaded', () => {
   createClickBlocker();
   blockActivePageClicks();
   initializeVideo(document);
+
+  // Disable home link if on homepage (for direct page loads)
+  disableHomeLinkOnHomepage();
 
   if (!preloaderCalled) {
     if (!isLegalPage()) {

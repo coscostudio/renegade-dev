@@ -3,7 +3,9 @@ import { Flip } from 'gsap/Flip';
 import { ScrollToPlugin } from 'gsap/ScrollToPlugin';
 import Hls from 'hls.js';
 
+import { autoplayStateManager } from '../../utils/browserAutoplayUtils';
 import { DirectLinkHandler } from '../../utils/directLinkHandler';
+import { unmuteOverlayManager } from '../../utils/unmuteOverlayManager';
 import {
   cleanupAccordionHLS,
   initializeAccordionHLS,
@@ -302,6 +304,9 @@ function closeAccordionOnFailure(
   if (accordionElement) {
     accordionElement.classList.remove('active', 'video-playing');
   }
+
+  // Clean up unmute overlay
+  unmuteOverlayManager.cleanup();
 
   // Clear URL
   DirectLinkHandler.clearAccordionSlug();
@@ -640,7 +645,7 @@ export async function prepareVideo(
   }
 }
 
-// Modified playAndFadeInVideo function with additional safety checks
+// Modified playAndFadeInVideo function with additional safety checks and unmute functionality
 export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void {
   if (!videoElement) return;
 
@@ -662,9 +667,21 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
   // Ensure opacity is 0 before starting
   videoElement.style.opacity = '0';
 
-  // Ensure video is not muted and volume is initially 0 for fade-in
-  videoElement.muted = false;
-  videoElement.volume = 0;
+  // Refresh autoplay state detection to get the most current state
+  autoplayStateManager.refreshDirectLinkDetection();
+
+  // Check if we should start muted due to autoplay restrictions
+  const shouldStartMuted = autoplayStateManager.shouldStartMuted();
+
+  // Set initial audio state - CRITICAL: Always start muted for Safari direct links
+  if (shouldStartMuted) {
+    videoElement.muted = true;
+    videoElement.volume = 0;
+    autoplayStateManager.setUnmutePending(true);
+  } else {
+    videoElement.muted = false;
+    videoElement.volume = 0; // Start at 0 for fade-in effect
+  }
 
   // Get the loader element reference if it exists
   const loaderElement = (videoElement as any)._loaderElement as HTMLElement | undefined;
@@ -695,27 +712,66 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
   const fadeIn = (isActuallyPlaying: boolean = false) => {
     clearPlaybackTimeout(); // Video is ready, clear the timeout
 
+    // Mark video as actually playing
+    if (isActuallyPlaying && accordionItem) {
+      accordionItem.classList.add('video-playing');
+    }
+
+    // Fade in video opacity
     gsap.to(videoElement, {
       opacity: 1,
-      volume: 1,
       duration: 0.75, // Longer fade for visual appeal
       ease: 'expo.inOut',
-      onComplete: () => {
-        // Double check unmuted state after fade completes
-        videoElement.muted = false;
-
-        // Handle Safari-specific issue with muted videos
-        if (videoElement.muted) {
-          videoElement.muted = false;
-          videoElement.volume = 1;
-        }
-
-        // ONLY ADD VIDEO-PLAYING CLASS IF VIDEO IS ACTUALLY PLAYING
-        if (isActuallyPlaying && accordionItem) {
-          accordionItem.classList.add('video-playing');
-        }
-      },
     });
+
+    // Handle audio fade-in separately based on muted state
+    if (shouldStartMuted) {
+      // Video starts muted - show unmute overlay AFTER video is visible
+      if (accordionItem) {
+        // Small delay to ensure video is visible first
+        setTimeout(() => {
+          unmuteOverlayManager.showUnmuteOverlay(videoElement, accordionItem, () => {
+            // Unmute callback - fade in audio with same transition style
+            autoplayStateManager.markRealUserInteraction(); // Use real interaction method
+            autoplayStateManager.setUnmutePending(false);
+
+            videoElement.muted = false;
+            gsap.to(videoElement, {
+              volume: 1,
+              duration: 0.75,
+              ease: 'expo.inOut',
+              onComplete: () => {
+                // Double check unmuted state after fade completes
+                videoElement.muted = false;
+
+                // Handle Safari-specific issue with muted videos
+                if (videoElement.muted) {
+                  videoElement.muted = false;
+                  videoElement.volume = 1;
+                }
+              },
+            });
+          });
+        }, 300); // Small delay to ensure video fade-in has started
+      }
+    } else {
+      // Normal audio fade-in
+      gsap.to(videoElement, {
+        volume: 1,
+        duration: 0.75,
+        ease: 'expo.inOut',
+        onComplete: () => {
+          // Double check unmuted state after fade completes
+          videoElement.muted = false;
+
+          // Handle Safari-specific issue with muted videos
+          if (videoElement.muted) {
+            videoElement.muted = false;
+            videoElement.volume = 1;
+          }
+        },
+      });
+    }
 
     // Only fade out loader if minimum time has passed
     if (loaderElement) {
@@ -797,64 +853,104 @@ export function playAndFadeInVideo(videoElement: HTMLVideoElement | null): void 
   videoElement.addEventListener('waiting', onBuffering);
   videoElement.addEventListener('playing', onPlaying);
 
-  // Play with error handling
+  // Play with error handling - updated for muted start logic
   try {
     const playPromise = videoElement.play();
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
-          // Only fade in with video-playing class if actually playing
-          fadeIn(videoActuallyPlaying);
+          // Video started playing successfully
+          videoActuallyPlaying = true;
+          fadeIn(true); // Pass true since video is actually playing
         })
         .catch((playError) => {
-          // If playback fails, try with muted first then unmute
-          videoElement.muted = true;
-          videoElement
-            .play()
-            .then(() => {
-              // Only fade in with video-playing class if actually playing
-              fadeIn(videoActuallyPlaying);
+          // If playback fails and we weren't already muted, try muted
+          if (!shouldStartMuted) {
+            videoElement.muted = true;
+            videoElement.volume = 0;
 
-              // Gradually unmute after playing
-              setTimeout(() => {
-                // Unmute the video
-                videoElement.muted = false;
+            videoElement
+              .play()
+              .then(() => {
+                videoActuallyPlaying = true;
+                fadeIn(true); // Pass true since video is playing
 
-                // Fade in volume
-                gsap.to(videoElement, {
-                  volume: 1,
-                  duration: 0.5,
-                  ease: 'expo.out',
-                  onComplete: () => {
-                    // Ensure unmuted state one final time
-                    videoElement.muted = false;
-                  },
-                });
-              }, 500);
-            })
-            .catch((mutedPlayError) => {
-              // CRITICAL FIX: Don't call fadeIn here - instead close accordion
-              // Hide loader in case of failure
-              if (loaderElement) {
-                loaderElement.style.opacity = '0';
-                loaderElement.style.visibility = 'hidden';
-                loaderElement.classList.remove('is-loading');
-              }
+                // For this fallback case, gradually unmute after playing (not Safari direct link case)
+                setTimeout(() => {
+                  // Unmute the video
+                  videoElement.muted = false;
 
-              // Close accordion immediately when video completely fails
-              setTimeout(() => {
-                const accordionItem = videoElement.closest('.js-accordion-item');
-                if (accordionItem && accordionItem.classList.contains('active')) {
-                  closeAccordionOnFailure(
-                    $(accordionItem),
-                    'Video playback failed - both normal and muted attempts failed'
-                  );
+                  // Fade in volume
+                  gsap.to(videoElement, {
+                    volume: 1,
+                    duration: 0.5,
+                    ease: 'expo.out',
+                    onComplete: () => {
+                      // Ensure unmuted state one final time
+                      videoElement.muted = false;
+                    },
+                  });
+                }, 500);
+              })
+              .catch((mutedPlayError) => {
+                // CRITICAL FIX: Don't call fadeIn here - instead close accordion
+                // Hide loader in case of failure
+                if (loaderElement) {
+                  loaderElement.style.opacity = '0';
+                  loaderElement.style.visibility = 'hidden';
+                  loaderElement.classList.remove('is-loading');
                 }
-              }, 500);
-            });
+
+                // Close accordion immediately when video completely fails
+                setTimeout(() => {
+                  const accordionItem = videoElement.closest('.js-accordion-item');
+                  if (accordionItem && accordionItem.classList.contains('active')) {
+                    closeAccordionOnFailure(
+                      $(accordionItem),
+                      'Video playback failed - both normal and muted attempts failed'
+                    );
+                  }
+                }, 500);
+              });
+          } else {
+            // We were already muted and still failed - this shouldn't happen for Safari
+            // Try one more time with explicit Safari handling
+            videoElement.muted = true;
+            videoElement.volume = 0;
+            videoElement.setAttribute('playsinline', '');
+            videoElement.setAttribute('webkit-playsinline', '');
+
+            setTimeout(() => {
+              videoElement
+                .play()
+                .then(() => {
+                  videoActuallyPlaying = true;
+                  fadeIn(true);
+                })
+                .catch((finalError) => {
+                  // Hide loader and close accordion
+                  if (loaderElement) {
+                    loaderElement.style.opacity = '0';
+                    loaderElement.style.visibility = 'hidden';
+                    loaderElement.classList.remove('is-loading');
+                  }
+
+                  setTimeout(() => {
+                    const accordionItem = videoElement.closest('.js-accordion-item');
+                    if (accordionItem && accordionItem.classList.contains('active')) {
+                      closeAccordionOnFailure(
+                        $(accordionItem),
+                        'Video playback failed - Safari muted play attempt failed'
+                      );
+                    }
+                  }, 500);
+                });
+            }, 100);
+          }
         });
     } else {
       // Older browsers without Promise support - assume it worked
+      videoActuallyPlaying = true;
       fadeIn(true);
     }
   } catch (error) {
@@ -886,6 +982,9 @@ export function fadeOutVideo(videoElement: HTMLVideoElement | null): void {
   if (accordionItem) {
     accordionItem.classList.remove('video-playing');
   }
+
+  // Clean up unmute overlay
+  unmuteOverlayManager.cleanup();
 
   // Cancel any pending loader timeout
   if ((videoElement as any)._loaderTimerId) {
@@ -965,6 +1064,9 @@ export function fadeOutAudioOnly(videoElement: HTMLVideoElement | null): void {
     accordionItem.classList.remove('video-playing');
   }
 
+  // Clean up unmute overlay
+  unmuteOverlayManager.cleanup();
+
   // Cancel any pending loader timeout
   if ((videoElement as any)._loaderTimerId) {
     clearTimeout((videoElement as any)._loaderTimerId);
@@ -1033,6 +1135,9 @@ export function resetVideo(videoElement: HTMLVideoElement | null): void {
     accordionItem.classList.remove('video-playing');
   }
 
+  // Clean up unmute overlay
+  unmuteOverlayManager.cleanup();
+
   // Make sure we completely stop the video
   videoElement.pause();
   videoElement.currentTime = 0;
@@ -1062,9 +1167,28 @@ function createAccordionBehavior() {
       // Store a reference to the accordion object
       const self = this;
 
-      // Add click handler
-      $('.js-accordion-item').on('click', function () {
+      // Add click handler with real user interaction detection
+      $('.js-accordion-item').on('click', function (event) {
         if (isAnimating) return;
+
+        // Check if this is a real user click vs programmatic
+        // Real user clicks will have originalEvent and/or proper event coordinates
+        // Also check for our programmatic flag
+        const isProgrammatic =
+          (event as any).isProgrammatic ||
+          (event.originalEvent && (event.originalEvent as any).isProgrammatic);
+
+        const isRealUserClick =
+          !isProgrammatic &&
+          event.originalEvent &&
+          event.originalEvent.isTrusted !== false &&
+          (typeof event.clientX === 'number' || typeof event.originalEvent.clientX === 'number');
+
+        // Only mark user interaction for real user clicks
+        if (isRealUserClick) {
+          autoplayStateManager.markRealUserInteraction();
+        }
+
         // 'this' now correctly refers to the clicked DOM element
         self.toggle($(this));
       });
@@ -1128,6 +1252,9 @@ function createAccordionBehavior() {
       if (isAnimating) return;
       isAnimating = true;
 
+      // DON'T mark user interaction immediately - we need to determine if this is a real user click
+      // or a programmatic click from direct link handling
+
       // Simply remove hover-state class from all items - no need for complex selectors
       document.querySelectorAll('.hover-state').forEach((item) => {
         item.classList.remove('hover-state');
@@ -1170,6 +1297,9 @@ function createAccordionBehavior() {
 
         const $openItem = $('.js-accordion-item.active');
         if ($openItem.length) {
+          // Clean up unmute overlay for the currently open item
+          unmuteOverlayManager.cleanup();
+
           // Find video element for the currently open accordion
           const openEventVideoContainer = $openItem.find('.event-video')[0];
           const openVideo = openEventVideoContainer
@@ -1436,6 +1566,9 @@ function createAccordionBehavior() {
 
         // REMOVE VIDEO-PLAYING CLASS IMMEDIATELY WHEN CLOSING
         $clicked.removeClass('video-playing');
+
+        // Clean up unmute overlay when closing
+        unmuteOverlayManager.cleanup();
 
         // CLEAR URL WHEN CLOSING ACCORDION (only when just closing, not switching)
         DirectLinkHandler.clearAccordionSlug();

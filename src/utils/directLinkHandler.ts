@@ -1,3 +1,4 @@
+import { autoplayStateManager } from './browserAutoplayUtils';
 import { clearEventFromURL, getEventParams, isValidEventId, setEventInURL } from './urlParams';
 
 /**
@@ -65,6 +66,9 @@ export class DirectLinkHandler {
   public async openTargetAccordion(coordinateWithPreloader: boolean = false): Promise<void> {
     if (!this.targetEventId || this.accordionOpened) return;
 
+    // Refresh autoplay detection to make sure we have the latest state
+    autoplayStateManager.refreshDirectLinkDetection();
+
     // Wait for DOM to be ready
     await this.waitForDOM();
 
@@ -88,6 +92,10 @@ export class DirectLinkHandler {
 
     // Mark as opened to prevent multiple attempts
     this.accordionOpened = true;
+
+    // Mark user interaction for autoplay management
+    // Note: We're NOT marking interaction here because we want the first video
+    // to potentially start muted on Safari. The actual click will mark interaction.
 
     if (coordinateWithPreloader) {
       // Coordinated sequence with preloader slide-up
@@ -126,7 +134,18 @@ export class DirectLinkHandler {
 
     // Wait for scroll to complete then trigger click
     setTimeout(() => {
-      accordionItem.click();
+      // Trigger a programmatic click that won't mark user interaction
+      const clickEvent = new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        // Don't set clientX/Y for programmatic clicks
+      });
+
+      // Mark this as a programmatic click
+      (clickEvent as any).isProgrammatic = true;
+
+      accordionItem.dispatchEvent(clickEvent);
     }, 500);
   }
 
@@ -196,8 +215,17 @@ export class DirectLinkHandler {
   public completeCoordinatedOpening(): void {
     const accordionItem = (window as any).__directLinkAccordionItem;
     if (accordionItem) {
-      // Trigger the accordion click
-      accordionItem.click();
+      // Trigger a programmatic click
+      const clickEvent = new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+      });
+
+      // Mark this as a programmatic click
+      (clickEvent as any).isProgrammatic = true;
+
+      accordionItem.dispatchEvent(clickEvent);
 
       // Clean up global references
       delete (window as any).__directLinkScrollTarget;
@@ -210,6 +238,8 @@ export class DirectLinkHandler {
    */
   public reset(): void {
     this.accordionOpened = false;
+    // Reset autoplay state manager when navigating
+    autoplayStateManager.reset();
     // Don't reset the target - it should persist for the session
   }
 }
