@@ -6,16 +6,9 @@
  * Detect if the current browser requires user interaction for audio autoplay
  */
 export function requiresInteractionForAudio(): boolean {
-  // Safari always requires interaction for audio autoplay
-  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-
-  // iOS browsers (including Chrome on iOS) require interaction
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-
-  // Firefox has similar restrictions in some configurations
-  const isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
-
-  return isSafari || isIOS || isFirefox;
+  // All modern browsers require interaction for audio autoplay
+  // We no longer make exceptions for Chrome desktop
+  return true;
 }
 
 /**
